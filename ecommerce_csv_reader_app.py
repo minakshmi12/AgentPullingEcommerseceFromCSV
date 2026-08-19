@@ -47,16 +47,37 @@ if not api_key:
 # ==========================================
 @st.cache_resource(show_spinner="Setting up the agent...")
 def build_agent(_api_key):
-    dataframes = [pd.read_csv(filename) for filename in files_to_download.keys()]
+    # Load DataFrames with proper error handling
+    dataframes = []
+    df_names = []
+    for filename in files_to_download.keys():
+        try:
+            df = pd.read_csv(filename)
+            dataframes.append(df)
+            # Extract dataset name from filename
+            name = filename.replace(".csv", "").replace("_", " ").title()
+            df_names.append(name)
+        except FileNotFoundError:
+            st.error(f"File not found: {filename}")
+            st.stop()
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0, api_key=_api_key)
 
+    # Create agent with proper system message
     agent = create_pandas_dataframe_agent(
         llm,
         dataframes,
         verbose=True,
-        agent_type="zero-shot-react-description",
-        allow_dangerous_code=True
+        agent_type="openai-functions",
+        allow_dangerous_code=True,
+        prefix="""You are a helpful data assistant with access to multiple CSV datasets: {}
+
+Instructions:
+- Always search the relevant dataset to answer questions
+- Cite the specific data you find in the CSV
+- Do NOT answer from general knowledge - only use the provided CSV data
+- If data is not found in the CSVs, say "I could not find this information in the available data"
+- Format your answer in clear, customer-friendly English""".format(", ".join(df_names))
     )
     return agent
 
@@ -100,8 +121,8 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner("AI is thinking..."):
             try:
-                final_query = system_prompt + "\n\nQuestion: " + user_input
-                response = agent.invoke(final_query)
+                # Pass the user input directly to the agent
+                response = agent.invoke({"input": user_input})
                 answer = response["output"]
             except Exception as e:
                 answer = f"An error occurred: {e}"
